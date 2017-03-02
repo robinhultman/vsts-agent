@@ -1,49 +1,76 @@
-using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using Microsoft.VisualStudio.Services.Agent.Util;
-using Microsoft.VisualStudio.Services.Common;
-using Microsoft.VisualStudio.Services.WebApi;
 using System;
-using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Net.Http;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
     [ServiceLocator(Default = typeof(CacheDirectoryManager))]
     public interface ICacheDirectoryManager : IAgentService
     {
-        Task Initialize(IExecutionContext jobContext);
-        Task Cleanup(IExecutionContext jobContext);
+        void InitializeTempDirectory(IExecutionContext jobContext);
+        void CleanupTempDirectory(IExecutionContext jobContext);
     }
 
-    public sealed class CacheDirectoryManager : AgentService, IJobRunner
+    public sealed class CacheDirectoryManager : AgentService
     {
-        public async Task Initialize(IExecutionContext jobContext)
+        public void InitializeTempDirectory(IExecutionContext jobContext)
         {
-            ArgUtil.NotNull(jobContext, nameof(jobContext);
+            ArgUtil.NotNull(jobContext, nameof(jobContext));
 
-#if OS_WINDOWS
-            // TEMP and TMP.
-            if (ConvertToBoolean(Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.OverrideTemp)) == false)
+            // TEMP and TMP on Windows
+            // TMPDIR on Linux
+            bool skipOverwriteTemp = false;
+            if (bool.TryParse(Environment.GetEnvironmentVariable("VSTS_NOTOVERWRITE_TEMP") ?? string.Empty, out skipOverwriteTemp) && skipOverwriteTemp)
             {
-                jobContext.Debug($"Skipping override {Constants.EnvironmentVariables.Temp}");
+                jobContext.Debug($"Skipping overwrite %TEMP% environment variable");
             }
             else
             {
                 string tempDirectory = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Work), Constants.Path.TempDirectory);
-                jobContext.Debug($"SET {Constants.EnvironmentVariables.Temp}={tempDirectory}");
-                Directory.CreateDirectory(tempDirectory);
-                SetEnvironmentVariable(Constants.EnvironmentVariables.Temp, tempDirectory);
-                SetEnvironmentVariable(Constants.EnvironmentVariables.Tmp, tempDirectory);
-
-                jobContext.Debug($"Cleaning {Constants.EnvironmentVariables.Temp}");
+                jobContext.Debug($"Cleaning temp folder: {tempDirectory}");
                 try
                 {
-                    IOUtil.Delete(tempDirectory, contentsOnly: true, cancellationToken: jobContext.CancellationToken);
+                    IOUtil.DeleteDirectory(tempDirectory, contentsOnly: true, cancellationToken: jobContext.CancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    Trace.Error("Failed cleaning one or more temp file");
+                    Trace.Error(ex);
+                }
+                finally
+                {
+                    // make sure folder exists
+                    Directory.CreateDirectory(tempDirectory);
+                }
+
+#if OS_WINDOWS
+                jobContext.Debug($"SET TMP={tempDirectory}");
+                jobContext.Debug($"SET TEMP={tempDirectory}");                
+                Environment.SetEnvironmentVariable("TMP", tempDirectory);
+                Environment.SetEnvironmentVariable("TEMP", tempDirectory);
+#else
+                jobContext.Debug($"SET TMPDIR={tempDirectory}");
+                Environment.SetEnvironmentVariable("TMPDIR", tempDirectory);
+#endif
+            }
+        }
+
+        public void CleanupTempDirectory(IExecutionContext jobContext)
+        {
+            ArgUtil.NotNull(jobContext, nameof(jobContext));
+
+            string tempDirectory = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Work), Constants.Path.TempDirectory);
+            bool skipOverwriteTemp = false;
+            if (bool.TryParse(Environment.GetEnvironmentVariable("VSTS_NOTOVERWRITE_TEMP") ?? string.Empty, out skipOverwriteTemp) && skipOverwriteTemp)
+            {
+                jobContext.Debug($"Skipping cleanup temp folder: {tempDirectory}");
+            }
+            else
+            {
+                jobContext.Debug($"Cleaning temp folder: {tempDirectory}");
+                try
+                {
+                    IOUtil.DeleteDirectory(tempDirectory, contentsOnly: true, cancellationToken: jobContext.CancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -51,61 +78,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     Trace.Error(ex);
                 }
             }
-#endif
-
-            // NuGet cache directory.
-            if (!string.IsNullOrEmpty(VarUtil.GetEnvironmentVariable(Constants.EnvironmentVariables.NuGetPackages, forceInsensitive: false)) ||
-                !string.IsNullOrEmpty(jobContext.Variables.Get(Constants.EnvironmentVariables.NuGetPackages)) ||
-                ConvertToBoolean(VarUtil.GetEnvironmentVariable(Constants.EnvironmentVariables.OverrideNuGetPackages, forceInsensitive: false) == false ||
-                jobContext.Variables.GetBoolean(Constants.EnvironmentVariables.OverrideNuGetPackages) == false)
-            {
-                jobContext.Debug($"Skipping override {Constants.EnvironmentVariables.NuGetPackages}");
-            }
-            else
-            {
-                string nuGetCacheDirectory = Path.Combine(
-                    HostContext.GetDirectory(WellKnownDirectory.Work),
-                    Constants.Path.CacheDirectory,
-                    Constants.Path.NuGetCacheDirectory);
-                jobContext.Debug($"SET {Constants.EnvironmentVariables.NugetPackages}={nuGetCacheDirectory}");
-                Directory.CreateDirectory(nuGetCacheDirectory);
-                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.NuGetPackages, nuGetCacheDirectory);
-            }
-
-            // NPM cache directory. NPM treats NPM_CONFIG_CACHE case insensitive.
-            if (!string.IsNullOrEmpty(VarUtil.GetEnvironmentVariable(Constants.EnvironmentVariables.NpmConfigCache, forceInsensitive: true)) ||
-                !string.IsNullOrEmpty(jobContext.Variables.Get(Constants.EnvironmentVariables.NpmConfigCache)) ||
-                ConvertToBoolean(VarUtil.GetEnvironmentVariable(Constants.EnvironmentVariables.OverrideNpmConfigCache, forceInsensitive: false) == false ||
-                jobContext.Variables.GetBoolean(Constants.EnvironmentVariables.OverrideNpmConfigCache) == false)
-            {
-                jobContext.Debug($"Skipping override {Constants.EnvironmentVariables.NpmConfigCache}");
-            }
-            else
-            {
-                string npmCacheDirectory = Path.Combine(
-                    HostContext.GetDirectory(WellKnownDirectory.Work),
-                    Constants.Path.CacheDirectory,
-                    Constants.Path.NpmCacheDirectory);
-                jobContext.Debug($"SET {Constants.EnvironmentVariables.NpmConfigCache}={npmCacheDirectory}");
-                Directory.CreateDirectory(npmCacheDirectory);
-                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.NpmConfigCache, npmCacheDirectory);
-            }
-        }
-
-        public async Task Cleanup(IExecutionContext jobContext)
-        {
-            ArgUtil.NotNull(jobContext, nameof(jobContext);
-        }
-
-        private static bool? ConvertToBoolean(string value)
-        {
-            bool val;
-            if (bool.TryParse(value ?? string.Empty, out val))
-            {
-                return val;
-            }
-
-            return null;
         }
     }
 }

@@ -155,19 +155,6 @@ namespace Microsoft.VisualStudio.Services.Agent
             public static readonly string GatedRunCI = "GatedRunCI";
         }
 
-        public static class EnvironmentVariables
-        {
-            public static readonly NpmConfigCache = "NPM_CONFIG_CACHE";
-            public static readonly NuGetPackages = "NUGET_PACKAGES";
-            public static readonly OverrideNpmConfigCache = "VSTS_OVERRIDE_NPM_CONFIG_CACHE";
-            public static readonly OverrideNuGetPackages = "VSTS_OVERRIDE_NUGET_PACKAGES";
-#if OS_WINDOWS
-            public static readonly OverrideTemp = "VSTS_OVERRIDE_TEMP";
-            public static readonly string Temp = "TEMP";
-            public static readonly string Tmp = "TMP";
-#endif
-        }
-
         public static class Expressions
         {
             public static readonly string Succeeded = "succeeded";
