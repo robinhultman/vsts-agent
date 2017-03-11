@@ -101,12 +101,13 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
             }
         }
 
-        protected void AddSecureFilesToEnvironment() 
+        protected void AddSecureFilesToEnvironment()
         {
             Trace.Entering();
             ArgUtil.NotNull(ExecutionContext, nameof(ExecutionContext));
-            
-            if (ExecutionContext.SecureFiles != null && ExecutionContext.SecureFiles.Count >0) {
+
+            if (ExecutionContext.SecureFiles != null && ExecutionContext.SecureFiles.Count > 0)
+            {
                 // Add the secure files to the environment variable dictionary.
                 foreach (SecureFile secureFile in ExecutionContext.SecureFiles)
                 {
@@ -200,6 +201,46 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Handlers
             ArgUtil.NotNullOrEmpty(key, nameof(key));
             Trace.Verbose($"Setting env '{key}' to '{value}'.");
             Environment[key] = value ?? string.Empty;
+        }
+
+        protected void AddIntraTaskStatesToEnvironment()
+        {
+            // Validate args.
+            Trace.Entering();
+            ArgUtil.NotNull(ExecutionContext.IntraTaskStates, nameof(ExecutionContext.IntraTaskStates));
+
+            var states = ExecutionContext.GetIntraTaskStates();
+            ArgUtil.NotNull(states, nameof(ExecutionContext.GetIntraTaskStates));
+
+            // Add the public states.
+            var names = new List<string>();
+            foreach (KeyValuePair<string, string> pair in states.Public)
+            {
+                // Add the variable using the formatted name.
+                string formattedKey = (pair.Key ?? string.Empty).Replace('.', '_').Replace(' ', '_').ToUpperInvariant();
+                AddEnvironmentVariable($"STATE_{formattedKey}", pair.Value);
+
+                // Store the name.
+                names.Add(pair.Key ?? string.Empty);
+            }
+
+            // Add the public state names.
+            AddEnvironmentVariable("VSTS_PUBLIC_STATES", StringUtil.ConvertToJson(names));
+
+            // Add the secret states.
+            var secretNames = new List<string>();
+            foreach (KeyValuePair<string, string> pair in states.Private)
+            {
+                // Add the variable using the formatted name.
+                string formattedKey = (pair.Key ?? string.Empty).Replace('.', '_').Replace(' ', '_').ToUpperInvariant();
+                AddEnvironmentVariable($"SECRETSTATE_{formattedKey}", pair.Value);
+
+                // Store the name.
+                secretNames.Add(pair.Key ?? string.Empty);
+            }
+
+            // Add the secret state names.
+            AddEnvironmentVariable("VSTS_SECRET_STATES", StringUtil.ConvertToJson(secretNames));
         }
     }
 }

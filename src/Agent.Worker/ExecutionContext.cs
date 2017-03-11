@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Collections.Concurrent;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -23,6 +24,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         List<SecureFile> SecureFiles { get; }
         PlanFeatures Features { get; }
         Variables Variables { get; }
+        ConcurrentDictionary<Guid, Variables> IntraTaskStates { get; }
         List<IAsyncCommandContext> AsyncCommands { get; }
 
         // Initialize
@@ -42,6 +44,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         void AddIssue(Issue issue);
         void Progress(int percentage, string currentOperation = null);
         void UpdateDetailTimelineRecord(TimelineRecord record);
+
+        // intra task states
+        void SetIntraTaskStates(string name, string value, bool secret);
+        Variables GetIntraTaskStates();
     }
 
     public sealed class ExecutionContext : AgentService, IExecutionContext
@@ -71,6 +77,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public List<ServiceEndpoint> Endpoints { get; private set; }
         public List<SecureFile> SecureFiles { get; private set; }
         public Variables Variables { get; private set; }
+        public ConcurrentDictionary<Guid, Variables> IntraTaskStates { get; private set; }
         public bool WriteDebug { get; private set; }
 
         public List<IAsyncCommandContext> AsyncCommands => _asyncCommands;
@@ -107,6 +114,14 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
         public PlanFeatures Features { get; private set; }
 
+        public override void Initialize(IHostContext hostContext)
+        {
+            base.Initialize(hostContext);
+
+            _jobServerQueue = HostContext.GetService<IJobServerQueue>();
+            _secretMasker = HostContext.GetService<ISecretMasker>();
+        }
+
         public void CancelToken()
         {
             _cancellationTokenSource.Cancel();
@@ -120,6 +135,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             child.Initialize(HostContext);
             child.Features = Features;
             child.Variables = Variables;
+            child.IntraTaskStates = IntraTaskStates;
             child.Endpoints = Endpoints;
             child.SecureFiles = SecureFiles;
             child._cancellationTokenSource = new CancellationTokenSource();
@@ -324,6 +340,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 }
             }
 
+            // Intra Task States
+            IntraTaskStates = new ConcurrentDictionary<Guid, Variables>();
+
             // Job timeline record.
             InitializeTimelineRecord(
                 timelineId: message.Timeline.Id,
@@ -385,12 +404,27 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             _jobServerQueue.QueueFileUpload(_mainTimelineId, _record.Id, type, name, filePath, deleteSource: false);
         }
 
-        public override void Initialize(IHostContext hostContext)
+        // intra task states
+        public void SetIntraTaskStates(string name, string value, bool secret)
         {
-            base.Initialize(hostContext);
+            Variables taskStates;
+            if (IntraTaskStates.TryGetValue(_record.Id, out taskStates))
+            {
+                taskStates.Set(name, value, secret);
+            }
+        }
 
-            _jobServerQueue = HostContext.GetService<IJobServerQueue>();
-            _secretMasker = HostContext.GetService<ISecretMasker>();
+        public Variables GetIntraTaskStates()
+        {
+            Variables taskStates;
+            if (IntraTaskStates.TryGetValue(_record.Id, out taskStates))
+            {
+                return taskStates;
+            }
+            else
+            {
+                return null;
+            }
         }
 
         private void InitializeTimelineRecord(Guid timelineId, Guid timelineRecordId, Guid? parentTimelineRecordId, string recordType, string name, int order)
